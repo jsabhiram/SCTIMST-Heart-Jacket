@@ -1,0 +1,213 @@
+#include <Keypad.h>
+#include "DFRobotDFPlayerMini.h"
+
+// Define the rows and columns of the keypad
+const byte ROWS = 4; // Four rows
+const byte COLS = 3; // Three columns
+
+// Define the keymap for your keypad
+char keys[ROWS][COLS] = {
+  {'1', '2', '3'},
+  {'4', '5', '6'},
+  {'7', '8', '9'},
+  {'*', '0', '#'}
+};
+
+// Connect keypad row and column pins to Arduino pins
+byte rowPins[ROWS] = {34, 36, 38, 40};    // Connect to the row pins
+byte colPins[COLS] = {42, 44, 46};       // Connect to the column pins
+
+// Create the Keypad object
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+// Create an instance for the DFPlayer Mini
+DFRobotDFPlayerMini myDFPlayer;
+
+// Pin definitions for touch sensors
+const int touchPins[4] = {3, 4, 5, 6}; // Touch sensors connected to pins 3, 4, 5, and 6
+
+// Audio files for each mode (total 20 audio tracks)
+const int audioFiles[5][4] = {
+  {1, 2, 3, 4},  // Mode 1: Tracks 1-4
+  {5, 6, 7, 8},  // Mode 2: Tracks 5-8
+  {9, 10, 11, 12},  // Mode 3: Tracks 9-12
+  {13, 14, 15, 16},  // Mode 4: Tracks 13-16
+  {17, 18, 19, 20}   // Mode 5: Tracks 17-20
+};
+
+// Variables to manage touch sensor functionality
+int currentMode = 0; // Pre-assigned mode (0 corresponds to Mode 1, 1 to Mode 2, etc.)
+int activeTouchSensor = -1; // Track which touch sensor is active
+bool isTouchActive = false; // Flag to check if touch is still active
+bool isTrackPlaying = false; // Flag to track if the current track is playing
+int lastTrackPlayed = -1; // Track the last track that was played
+
+// Volume control variables
+const int maxVolume = 30; // Maximum volume level
+const int minVolume = 15;  // Minimum volume level
+int currentVolume = 20;   // Default volume level
+
+void setup() {
+  // Initialize serial communication
+  Serial.begin(9600);  // For Serial Monitor
+  Serial1.begin(9600); // For HC-05 Bluetooth communication
+  Serial3.begin(9600); // For DFPlayer Mini communication
+  
+  // Initialize DFPlayer Mini
+  if (!myDFPlayer.begin(Serial3)) {
+    Serial.println("DFPlayer Mini not detected.");
+    while (true);  // Stay in this loop if DFPlayer is not detected
+  }
+
+  Serial.println("DFPlayer Mini ready.");
+  myDFPlayer.volume(currentVolume); // Set initial volume
+
+  // Initialize touch sensor pins as input
+  for (int i = 0; i < 4; i++) {
+    pinMode(touchPins[i], INPUT);
+  }
+
+  Serial.println("Send a message via Bluetooth to control modes or volume.");
+}
+
+void loop() {
+  // Keypad functionality
+  char key = keypad.getKey();
+  if (key) {
+    Serial.print("Key Pressed: ");
+    Serial.println(key);
+
+    int newMode = -1;
+    if (key == '1') newMode = 0;
+    else if (key == '2') newMode = 1;
+    else if (key == '3') newMode = 2;
+    else if (key == '4') newMode = 3;
+    else if (key == '5') newMode = 4;
+
+    if (newMode != -1 && newMode != currentMode) {
+      currentMode = newMode;
+      sendMessageToController("Mode Changed", currentMode + 1);
+    }
+  }
+
+  // Bluetooth command handling
+  if (Serial1.available() > 0) {
+    String receivedMessage = Serial1.readString();
+    receivedMessage.trim(); // Clean up message
+
+    Serial.print("Received from Bluetooth: ");
+    Serial.println(receivedMessage);
+
+    // Handle volume control commands
+    if (receivedMessage == "VOLUP") {
+      if (currentVolume < maxVolume) {
+        currentVolume++;
+        myDFPlayer.volume(currentVolume);
+        Serial1.println("Volume increased to " + String(currentVolume));
+        Serial.println("Volume increased to " + String(currentVolume));
+      } else {
+        Serial1.println("Volume is already at maximum.");
+        Serial.println("Volume is already at maximum.");
+      }
+    } else if (receivedMessage == "VOLDOWN") {
+      if (currentVolume > minVolume) {
+        currentVolume--;
+        myDFPlayer.volume(currentVolume);
+        Serial1.println("Volume decreased to " + String(currentVolume));
+        Serial.println("Volume decreased to " + String(currentVolume));
+      } else {
+        Serial1.println("Volume is already at minimum.");
+        Serial.println("Volume is already at minimum.");
+      }
+    }
+
+    // Handle mode switching commands
+    if (receivedMessage.startsWith("MODE")) {
+      int modeIndex = receivedMessage.substring(4).toInt() - 1;
+      if (modeIndex >= 0 && modeIndex < 5) {
+        currentMode = modeIndex;
+        Serial1.println("Mode switched to " + String(currentMode + 1));
+        Serial.println("Mode switched to " + String(currentMode + 1));
+      }
+    }
+
+    // Handle help command
+    if (receivedMessage == "HELP") {
+      String helpMessage = 
+        "Help:\n"
+        "Developed by J S Abhiram Suresh\n"
+        "www.linkedin.com/in/j-s-abhiram-suresh-31657b270\n"
+        "1. Use the keypad to select modes (Keys: 1-5).\n"
+        "   - Mode determines which tracks are linked to the touch sensors.\n"
+        "2. Touch any of the 4 sensors to play the corresponding audio track.\n"
+        "3. Use Bluetooth to remotely switch modes:\n"
+        "   - Commands: MODE1, MODE2, MODE3, MODE4, MODE5\n"
+        "4. Ensure DFPlayer Mini is connected and functional. Check the serial monitor for errors.\n"
+        "5. Volume is set to 20 by default. Adjust if necessary.\n"
+        "\n"
+        "Basic Troubleshooting:\n"
+        "1. DFPlayer Mini Not Detected:\n"
+        "   - Ensure it's connected to Serial3 (TX to RX3, RX to TX3).\n"
+        "   - Check power supply and ground connections.\n"
+        "2. No Audio Playback:\n"
+        "   - Verify audio files are correctly named (0001.mp3 to 0020.mp3) and stored in the SD card.\n"
+        "   - Ensure SD card is formatted to FAT32.\n"
+        "3. Touch Sensors Unresponsive:\n"
+        "   - Check connections to pins 3, 4, 5, and 6.\n"
+        "   - Verify sensors are properly grounded and powered.\n"
+        "4. Keypad Not Working:\n"
+        "   - Ensure proper wiring of row and column pins to rowPins and colPins.\n"
+        "   - Test keypad connections using a simpler sketch.\n"
+        "5. Bluetooth Issues:\n"
+        "   - Confirm HC-05 is powered and paired.\n"
+        "   - Use a terminal app to test commands like 'MODE1' and 'js'.\n"
+        "6. Serial Communication Problems:\n"
+        "   - Ensure the baud rate matches (9600 for Serial, Serial1, and Serial3).\n"
+        "   - Use a serial monitor to debug messages.";
+    
+      Serial1.println(helpMessage);
+    }
+
+    // Echo the received message
+    Serial1.print("Echo: ");
+    Serial1.println(receivedMessage);
+  }
+
+  // Touch sensor input and track playback
+  activeTouchSensor = -1;
+  for (int i = 0; i < 4; i++) {
+    if (digitalRead(touchPins[i]) == HIGH) {
+      activeTouchSensor = i;
+      break;
+    }
+  }
+
+  if (activeTouchSensor != -1) {
+    if (!isTouchActive) {
+      isTouchActive = true;
+      int trackToPlay = audioFiles[currentMode][activeTouchSensor];
+      if (trackToPlay != lastTrackPlayed) {
+        myDFPlayer.play(trackToPlay);
+        sendMessageToController("start", trackToPlay);
+        lastTrackPlayed = trackToPlay;
+        isTrackPlaying = true;
+      }
+    }
+  } else {
+    if (isTouchActive && isTrackPlaying) {
+      myDFPlayer.stop();
+      sendMessageToController("end", lastTrackPlayed);
+      lastTrackPlayed = -1;
+      isTrackPlaying = false;
+    }
+    isTouchActive = false;
+  }
+}
+
+// Function to send a message to the controller
+void sendMessageToController(String action, int trackNumber) {
+  String message = "Action: " + action + ", Mode: " + String(currentMode + 1) + ", Track: " + String(trackNumber);
+  Serial1.println(message);
+  Serial.print("Message sent to controller: ");
+  Serial.println(message);
+}
