@@ -1,0 +1,193 @@
+// This code provides basic functionality for interacting with a keypad,
+// a sound player module, and touch sensors. It enables selection of
+// interaction modes via the keypad or remote commands, and triggers
+// audio playback based on touch input, with remote volume adjustment.
+//Actual code is hidden because of copyright and patenting concerns,this is an local ollama based ai-llm generated abstraction.
+// This implementation is for illustrative purposes and demonstrates
+// fundamental hardware control. Users are responsible for ensuring
+// appropriate use and compliance with any relevant terms for the
+// hardware components and any media content utilized.
+
+#include <Keypad.h>
+#include "DFRobotDFPlayerMini.h" // Assuming this is the sound player library
+
+// Define keypad layout dimensions
+const byte KEYPAD_ROWS = 4;
+const byte KEYPAD_COLS = 3;
+
+// Define the mapping of keys on the keypad
+char keyCharacters[KEYPAD_ROWS][KEYPAD_COLS] = {
+  {'A', 'B', 'C'},
+  {'D', 'E', 'F'},
+  {'G', 'H', 'I'},
+  {'*', '0', '#'}
+};
+
+// Connect keypad pins to microcontroller pins
+byte rowPins[KEYPAD_ROWS] = {34, 36, 38, 40};
+byte colPins[KEYPAD_COLS] = {42, 44, 46};
+
+// Create the Keypad object instance
+Keypad userKeypad = Keypad(makeKeymap(keyCharacters), rowPins, colPins, KEYPAD_ROWS, KEYPAD_COLS);
+
+// Create an instance for the sound player module
+DFRobotDFPlayerMini soundPlayer;
+
+// Pin definitions for the touch input devices
+const int touchInputs[4] = {3, 4, 5, 6};
+
+// Mapping of audio sequences for each interaction context
+const int soundSequences[5][4] = {
+  {11, 12, 13, 14},   // Context 1: Sounds 11-14
+  {15, 16, 17, 18},   // Context 2: Sounds 15-18
+  {19, 20, 21, 22},   // Context 3: Sounds 19-22
+  {23, 24, 25, 26},   // Context 4: Sounds 23-26
+  {27, 28, 29, 30}    // Context 5: Sounds 27-30
+};
+
+// Variables to manage the interaction state
+int currentContext = 0;     // Initial interaction context (0-indexed)
+int activeSensorIndex = -1; // Tracks the currently active touch sensor index
+bool isTouched = false;     // Flag indicating if a touch sensor is currently active
+bool audioPlaying = false;  // Flag indicating if audio is currently being played
+int lastPlayedAudio = -1;   // Stores the index of the last played audio sequence
+
+// Audio level settings
+const int maxAudioLevel = 30;
+const int minAudioLevel = 15;
+int currentAudioLevel = 20;
+
+void setup() {
+  // Initialize serial communication for debugging and remote interface
+  Serial.begin(9600);    // For Serial Monitor
+  Serial1.begin(9600);   // For remote communication (e.g., Bluetooth)
+  Serial3.begin(9600);   // For sound player module communication
+
+  // Initialize the sound player module
+  if (!soundPlayer.begin(Serial3)) {
+    Serial.println("Sound player module initialization failed. Check connections.");
+    while (true);
+  }
+  Serial.println("Sound player module initialized.");
+  soundPlayer.volume(currentAudioLevel);
+
+  // Configure touch input device pins as inputs
+  for (int i = 0; i < 4; i++) {
+    pinMode(touchInputs[i], INPUT);
+  }
+
+  Serial.println("Ready for keypad, touch input, and remote commands.");
+}
+
+void loop() {
+  // Check for keypad input
+  char pressedKey = userKeypad.getKey();
+  if (pressedKey) {
+    Serial.print("Key pressed: ");
+    Serial.println(pressedKey);
+
+    int newContext = -1;
+    if (pressedKey == 'A') newContext = 0;
+    else if (pressedKey == 'B') newContext = 1;
+    else if (pressedKey == 'C') newContext = 2;
+    else if (pressedKey == 'D') newContext = 3;
+    else if (pressedKey == 'E') newContext = 4;
+
+    if (newContext != -1 && newContext != currentContext) {
+      currentContext = newContext;
+      sendRemoteMessage("context_change", currentContext + 1);
+    }
+  }
+
+  // Handle incoming remote commands
+  if (Serial1.available() > 0) {
+    String receivedCommand = Serial1.readString();
+    receivedCommand.trim();
+
+    Serial.print("Received remote command: ");
+    Serial.println(receivedCommand);
+
+    if (receivedCommand == "LOUDER") {
+      if (currentAudioLevel < maxAudioLevel) {
+        currentAudioLevel++;
+        soundPlayer.volume(currentAudioLevel);
+        Serial1.println("Audio level increased to " + String(currentAudioLevel));
+        Serial.println("Audio level increased to " + String(currentAudioLevel));
+      } else {
+        Serial1.println("Audio level at maximum.");
+        Serial.println("Audio level at maximum.");
+      }
+    } else if (receivedCommand == "QUIETER") {
+      if (currentAudioLevel > minAudioLevel) {
+        currentAudioLevel--;
+        soundPlayer.volume(currentAudioLevel);
+        Serial1.println("Audio level decreased to " + String(currentAudioLevel));
+        Serial.println("Audio level decreased to " + String(currentAudioLevel));
+      } else {
+        Serial1.println("Audio level at minimum.");
+        Serial.println("Audio level at minimum.");
+      }
+    } else if (receivedCommand.startsWith("CONTEXT")) {
+      int contextIndex = receivedCommand.substring(7).toInt() - 1;
+      if (contextIndex >= 0 && contextIndex < 5) {
+        currentContext = contextIndex;
+        Serial1.println("Interaction context switched to " + String(currentContext + 1));
+        Serial.println("Interaction context switched to " + String(currentContext + 1));
+      }
+    } else if (receivedCommand == "INFO") {
+      String infoText =
+          "Available remote commands:\n"
+          "- Keypad: Press keys 'A' to 'E' to change contexts.\n"
+          "- Touch Input: Touch to play associated sound in the current context.\n"
+          "- Remote Interface:\n"
+          "  - LOUDER: Increase audio level.\n"
+          "  - QUIETER: Decrease audio level.\n"
+          "  - CONTEXT1 to CONTEXT5: Change interaction context.\n"
+          "  - INFO: Display this information.\n";
+      Serial1.println(infoText);
+      Serial.println(infoText);
+    }
+
+    Serial1.print("Command processed: ");
+    Serial1.println(receivedCommand);
+  }
+
+  // Check touch input device states
+  activeSensorIndex = -1;
+  for (int i = 0; i < 4; i++) {
+    if (digitalRead(touchInputs[i]) == HIGH) {
+      activeSensorIndex = i;
+      break;
+    }
+  }
+
+  // Handle touch input activation
+  if (activeSensorIndex != -1) {
+    if (!isTouched) {
+      isTouched = true;
+      int soundToPlay = soundSequences[currentContext][activeSensorIndex];
+      if (soundToPlay != lastPlayedAudio) {
+        soundPlayer.play(soundToPlay);
+        sendRemoteMessage("audio_start", soundToPlay);
+        lastPlayedAudio = soundToPlay;
+        audioPlaying = true;
+      }
+    }
+  } else {
+    // Handle touch input deactivation
+    if (isTouched && audioPlaying) {
+      soundPlayer.stop();
+      sendRemoteMessage("audio_end", lastPlayedAudio);
+      lastPlayedAudio = -1;
+      audioPlaying = false;
+    }
+    isTouched = false;
+  }
+}
+
+// Function to send a remote message
+void sendRemoteMessage(String action, int value) {
+  String message = "Event: " + action + ", Context: " + String(currentContext + 1) + ", Data: " + String(value);
+  Serial1.println(message);
+  Serial.println("Sent remote event: " + message);
+}
